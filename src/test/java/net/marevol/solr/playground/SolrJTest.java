@@ -25,14 +25,19 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.List;
 import java.util.logging.Logger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import org.apache.solr.client.solrj.SolrClient;
+import org.apache.solr.client.solrj.SolrQuery;
+import org.apache.solr.client.solrj.SolrQuery.ORDER;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.impl.Http2SolrClient;
+import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.client.solrj.response.SolrPingResponse;
+import org.apache.solr.client.solrj.response.UpdateResponse;
 import org.codelibs.curl.Curl;
 import org.codelibs.curl.CurlResponse;
 import org.junit.jupiter.api.AfterAll;
@@ -42,6 +47,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.SolrContainer;
 import org.testcontainers.utility.DockerImageName;
+
+import net.marevol.solr.playground.entity.Company;
 
 class SolrJTest {
     static final Logger logger = Logger.getLogger(SolrJTest.class.getName());
@@ -171,9 +178,9 @@ class SolrJTest {
     }
 
     @Test
-    void test_run() throws Exception {
+    void test_simple() throws Exception {
         final String configName = "playground";
-        final String collectionName = "pgc8n";
+        final String collectionName = "companies";
 
         createConfig(configName);
         createCollection(configName, collectionName, 1);
@@ -181,9 +188,33 @@ class SolrJTest {
         final String solrUrl = getSolrUrl();
         final SolrClient client = createSolrClient(solrUrl);
 
-        final SolrPingResponse response = client.ping(collectionName);
+        {
+            final Company amazon = new Company("AMZN", "Amazon.com, Inc.");
+            final UpdateResponse response = client.addBean(collectionName, amazon);
+            assertEquals(0, response.getStatus());
+        }
 
-        assertEquals(0, response.getStatus());
+        {
+            final UpdateResponse response = client.commit(collectionName);
+            assertEquals(0, response.getStatus());
+        }
+
+        {
+            final SolrQuery query = new SolrQuery("*:*");
+            query.setSort("id", ORDER.asc);
+
+            final QueryResponse response = client.query(collectionName, query);
+            final List<Company> companies = response.getBeans(Company.class);
+            assertEquals(1, companies.size());
+            final Company amazon = companies.get(0);
+            assertEquals("AMZN", amazon.id);
+            assertEquals("Amazon.com, Inc.", amazon.name);
+        }
+
+        {
+            final UpdateResponse response = client.deleteById(collectionName, "AMZN");
+            assertEquals(0, response.getStatus());
+        }
 
         deleteCollection(collectionName);
         deleteConfig(configName);
