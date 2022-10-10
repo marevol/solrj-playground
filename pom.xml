@@ -131,6 +131,12 @@
 			<version>${slf4j.version}</version>
 		</dependency>
 		<dependency>
+			<groupId>org.codelibs</groupId>
+			<artifactId>curl4j</artifactId>
+			<version>1.2.7-SNAPSHOT</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
 			<groupId>org.junit.jupiter</groupId>
 			<artifactId>junit-jupiter-api</artifactId>
 			<version>${junit.jupiter.version}</version>

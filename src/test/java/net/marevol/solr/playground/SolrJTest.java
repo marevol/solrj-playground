@@ -18,12 +18,23 @@ package net.marevol.solr.playground;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.logging.Logger;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.impl.Http2SolrClient;
 import org.apache.solr.client.solrj.response.SolrPingResponse;
+import org.codelibs.curl.Curl;
+import org.codelibs.curl.CurlResponse;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -92,6 +103,90 @@ class SolrJTest {
     @AfterAll
     static void tearDownAll() {
         container.stop();
+    }
+
+    static void createConfig(final String configName) throws IOException {
+        final Path configPath = Paths.get("src/test/resources/configset/" + configName);
+        final Path configSetPath = Files.createTempFile("configset", ".zip");
+        try (final ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(configSetPath))) {
+            Files.walkFileTree(configPath, new SimpleFileVisitor<Path>() {
+
+                @Override
+                public FileVisitResult preVisitDirectory(final Path dir, final BasicFileAttributes attrs) throws IOException {
+                    final String name = configPath.relativize(dir).toString();
+                    if (!name.isEmpty()) {
+                        out.putNextEntry(new ZipEntry(name + "/"));
+                        out.closeEntry();
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(final Path file, final BasicFileAttributes attrs) throws IOException {
+                    final Path targetFile = configPath.relativize(file);
+                    out.putNextEntry(new ZipEntry(targetFile.toString()));
+                    out.write(Files.readAllBytes(file));
+                    out.closeEntry();
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        }
+
+        try (final InputStream in = Files.newInputStream(configSetPath);
+                final CurlResponse response = Curl.post(getSolrUrl() + "/admin/configs").header("Content-Type", "application/octed-stream")
+                        .param("action", "UPLOAD").param("name", configName).body(in).execute()) {
+            if (response.getHttpStatusCode() != 200) {
+                throw new IOException("Failed to create " + configName + " from " + configPath + ": " + response.getContentAsString());
+            }
+        }
+
+        Files.delete(configSetPath);
+    }
+
+    static void deleteConfig(final String configName) throws IOException {
+        try (CurlResponse response =
+                Curl.post(getSolrUrl() + "/admin/configs").param("action", "DELETE").param("name", configName).execute()) {
+            if (response.getHttpStatusCode() != 200) {
+                throw new IOException("Failed to delete " + configName + ": " + response.getContentAsString());
+            }
+        }
+    }
+
+    static void createCollection(final String configName, final String collectionName, final int numShards) throws IOException {
+        try (CurlResponse response = Curl.post(getSolrUrl() + "/admin/collections").param("action", "CREATE").param("name", collectionName)
+                .param("numShards", Integer.toString(numShards)).param("collection.configName", configName).execute()) {
+            if (response.getHttpStatusCode() != 200) {
+                throw new IOException("Failed to create " + collectionName + " with " + configName + ": " + response.getContentAsString());
+            }
+        }
+    }
+
+    static void deleteCollection(final String collectionName) throws IOException {
+        try (CurlResponse response =
+                Curl.post(getSolrUrl() + "/admin/collections").param("action", "DELETE").param("name", collectionName).execute()) {
+            if (response.getHttpStatusCode() != 200) {
+                throw new IOException("Failed to delete " + collectionName + ": " + response.getContentAsString());
+            }
+        }
+    }
+
+    @Test
+    void test_run() throws Exception {
+        final String configName = "playground";
+        final String collectionName = "pgc8n";
+
+        createConfig(configName);
+        createCollection(configName, collectionName, 1);
+
+        final String solrUrl = getSolrUrl();
+        final SolrClient client = createSolrClient(solrUrl);
+
+        final SolrPingResponse response = client.ping(collectionName);
+
+        assertEquals(0, response.getStatus());
+
+        deleteCollection(collectionName);
+        deleteConfig(configName);
     }
 
     @Test
